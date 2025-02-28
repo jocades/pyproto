@@ -1,42 +1,7 @@
 import asyncio
 from dataclasses import dataclass
-from proto import User
-
-
-class Server:
-    def __init__(self, *, addr="0.0.0.0", port=8000):
-        self.addr = addr
-        self.port = port
-
-    async def process(
-        self,
-        reader: asyncio.StreamReader,
-        writer: asyncio.StreamWriter,
-    ):
-        conn = Connection(reader, writer)
-        addr = conn.peer_addr()
-        print(f"{addr} connected")
-
-        try:
-            while True:
-                message = await reader.readline()
-                if not message:
-                    break
-                print("->", message)
-                writer.write(message)
-                await writer.drain()
-
-        except asyncio.IncompleteReadError:
-            print(f"{addr} disconnected")
-
-        print(f"{addr} closing connection")
-        writer.close()
-        await writer.wait_closed()
-
-    async def run(self):
-        async with await asyncio.start_server(self.process, self.addr, self.port) as server:
-            print(f"Listening on port {self.port}...")
-            await server.serve_forever()
+from typing import Awaitable, Callable
+from proto import User, with_marker
 
 
 @dataclass
@@ -64,14 +29,64 @@ class Connection:
             self._peer_addr = Addr(host, port)
         return self._peer_addr
 
+    async def send(self, message: str | bytes):
+        self.writer.write(with_marker(message))
+        await self.writer.drain()
 
-async def serve(*, addr="0.0.0.0", port=8000):
-    server = Server(addr=addr, port=port)
+    async def __aiter__(self):
+        try:
+            while True:
+                marker = int.from_bytes(await self.reader.readexactly(4))
+                message = await self.reader.readexactly(marker)
+                yield message
+
+        except asyncio.IncompleteReadError:
+            pass
+            # print(f"{addr} disconnected")
+
+        # print(f"{addr} closing connection")
+        self.writer.close()
+        await self.writer.wait_closed()
+
+
+class Server:
+    def __init__(
+        self,
+        callback: Callable[[Connection], Awaitable[None]],
+        *,
+        addr="0.0.0.0",
+        port=8000,
+    ):
+        self.callback = callback
+        self.addr = addr
+        self.port = port
+
+    async def process(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+    ):
+        conn = Connection(reader, writer)
+        await self.callback(conn)
+
+    async def run(self):
+        async with await asyncio.start_server(self.process, self.addr, self.port) as server:
+            print(f"Listening on port {self.port}...")
+            await server.serve_forever()
+
+
+async def process(conn: Connection):
+    async for message in conn:
+        await conn.send(f"echo -> {message.decode()}")
+
+
+async def main():
+    server = Server(process)
     await server.run()
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(serve())
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("Shutting down...")

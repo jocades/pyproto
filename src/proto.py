@@ -3,6 +3,15 @@ from typing import dataclass_transform, Self
 from dataclasses import dataclass, fields
 
 
+def with_marker(v: str | bytes) -> bytes:
+    if isinstance(v, bytes):
+        marker = len(v)
+    else:
+        v = v.encode()  # type:ignore
+        marker = len(v)
+    return pack("!I", marker) + v
+
+
 def packint(n: int) -> bytes:
     return pack("!I", n)
 
