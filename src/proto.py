@@ -60,6 +60,9 @@ class Proto:
 
         return cls(*values)
 
+    def _private(self):
+        pass
+
 
 class User(Proto):
     name: str
